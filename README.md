@@ -1,5 +1,3 @@
-![icon](https://raw.githubusercontent.com/chsengni/runpod-minimax-h3-selflift/main/media/icon.png)
-
 # RunPod Serverless · MiniMax H3 SelfLift + 锐化放大
 
 [![Runpod](https://api.runpod.io/badge/chsengni/runpod-minimax-h3-selflift)](https://console.runpod.io/hub)
