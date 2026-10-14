@@ -14,7 +14,7 @@ Job input (everything except "prompt" and "images" is optional):
     "audios":     ["https://... or base64"],   # 0-3 standalone reference audios → <Audio 1..3>
     "enhance":    true,                        # false → skip QwenH3PromptLocal, prompt goes straight to H3
     "seconds":    10,                          # video length in seconds
-    "aspect_ratio": "16:9 (Widescreen)",       # ResolutionSelector
+    "aspect_ratio": "16:9 (Widescreen)",      # ResolutionSelector
     "megapixels": 1.5,
     "seed":       123,                         # pins sampler + Qwen seeds; random if omitted
     "steps":      8,                           # BasicScheduler steps
@@ -23,10 +23,21 @@ Job input (everything except "prompt" and "images" is optional):
     "lowres_scale": 0.5,
     "skill":      "auto",                      # QwenH3PromptLocal skill
     "think_mode": false,
-    "params":     {"<node_id>:<input>": value} # raw overrides, applied last
+    "params":     {"<node_id>:<input>": value},# raw overrides, applied last
+    "s3Config":   {"endpointUrl": ..., "accessId": ..., "accessSecret": ...,
+                   "bucketName": ..., "region": ...}  # optional: large outputs offload here
   }
 
-Returns: {"outputs": [{"filename": "...mp4", "b64": "..."}], "final_prompt": "...", "seed": n}
+Output delivery: videos ≤ OUTPUT_INLINE_MAX_MB (default 10) are returned inline
+as base64; anything larger is uploaded to the job's s3Config storage (e.g. the
+RunPod network volume S3 API) and returned as a presigned URL. This matters
+because RunPod's job-done callback drops results over ~20MB — without the
+offload, a long/high-res video would "succeed" but arrive empty.
+
+Env knobs: OUTPUT_INLINE_MAX_MB=10, OUTPUT_INLINE_BUDGET_MB=15 (total inline
+budget per job), S3_OUTPUT_PREFIX=outputs, S3_URL_TTL_S=3600.
+
+Returns: {"outputs": [{"filename": "...mp4", "b64"|"url": ...}], "final_prompt": "...", "seed": n}
 Health:  {"action": "health"}
 """
 
@@ -35,6 +46,7 @@ import base64
 import json
 import os
 import random
+import re
 import subprocess
 import threading
 import time
@@ -50,6 +62,12 @@ COMFY_DIR = os.environ.get("COMFYUI_DIR", "/workspace/runpod-slim/ComfyUI")
 COMFY_URL = "http://127.0.0.1:8188"
 WORKFLOWS_DIR = Path(os.environ.get("WORKFLOWS_DIR", "/opt/workflows"))
 JOB_TIMEOUT_S = int(os.environ.get("JOB_TIMEOUT_S", "1800"))
+
+# Output delivery: base64 inline under these limits, S3 offload above them.
+# RunPod's job-done callback drops results over ~20MB, so keep headroom.
+INLINE_MAX = int(os.environ.get("OUTPUT_INLINE_MAX_MB", "10")) * 1024 * 1024
+INLINE_BUDGET = int(os.environ.get("OUTPUT_INLINE_BUDGET_MB", "15")) * 1024 * 1024
+S3_PREFIX = os.environ.get("S3_OUTPUT_PREFIX", "outputs")
 
 WORKFLOWS = {
     "normal": "MiniMaxH3-SelfLift-Sharpen-R2VA.json",
@@ -302,9 +320,73 @@ async def _queue_and_wait(prompt):
     raise TimeoutError(f"prompt {prompt_id} exceeded {JOB_TIMEOUT_S}s")
 
 
-def _collect(entry):
-    outputs, final_prompt = [], None
+def _s3_cfg(job):
+    cfg = job.get("s3Config") or (job.get("input") or {}).get("s3Config")
+    if isinstance(cfg, dict) and cfg.get("endpointUrl") and cfg.get("accessId"):
+        return cfg
+    return None
+
+
+def _s3_client(cfg):
+    import boto3  # lazy: only needed when S3 offload is actually used
+    from botocore.config import Config
+    host = urllib.parse.urlparse(cfg["endpointUrl"]).netloc
+    region = cfg.get("region") or host.split(".", 1)[0].removeprefix("s3api-") or "us-east-1"
+    return boto3.client(
+        "s3",
+        endpoint_url=cfg["endpointUrl"],
+        aws_access_key_id=cfg["accessId"],
+        aws_secret_access_key=cfg["accessSecret"],
+        region_name=region,
+        config=Config(s3={"addressing_style": "path"}),
+    )
+
+
+def _emit_file(filename, data, job, inline_used):
+    """Small outputs inline as b64; large ones upload to the job's s3Config
+    storage (e.g. the RunPod network volume S3 API) and return a presigned URL."""
+    oversized = len(data) > INLINE_MAX or inline_used[0] + len(data) > INLINE_BUDGET
+    s3c = _s3_cfg(job)
+    if oversized and s3c:
+        try:
+            key = f"{S3_PREFIX}/{job.get('id', 'job')}/{filename}"
+            client = _s3_client(s3c)
+            client.put_object(Bucket=s3c["bucketName"], Key=key, Body=data)
+            url = client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": s3c["bucketName"], "Key": key},
+                ExpiresIn=int(os.environ.get("S3_URL_TTL_S", "3600")),
+            )
+            print(f"[handler] {filename} -> s3://{s3c['bucketName']}/{key} ({len(data)/1e6:.1f}MB)", flush=True)
+            return {"filename": filename, "url": url}
+        except Exception as e:
+            print(f"[handler] s3 upload failed for {filename}: {e} — falling back to inline", flush=True)
+    elif oversized:
+        print(f"[handler] {filename}: {len(data)/1e6:.1f}MB over inline limit, no s3Config — "
+              "result may be dropped by RunPod", flush=True)
+    inline_used[0] += len(data)
+    return {"filename": filename, "b64": base64.b64encode(data).decode()}
+
+
+def _collect_new_files(since_ts, job, inline_used):
+    """Fallback: video files written under ComfyUI's output dir since the job ran."""
+    out_dir = Path(COMFY_DIR) / "output"
+    try:
+        files = sorted(p for p in out_dir.rglob("*") if p.is_file() and p.stat().st_mtime >= since_ts)
+    except Exception:
+        return []
+    out = []
+    for p in files:
+        if p.suffix.lower() not in VIDEO_EXT:
+            continue
+        out.append(_emit_file(p.name, p.read_bytes(), job, inline_used))
+    return out
+
+
+def _collect(entry, job):
+    outputs, final_prompt, inline_used = [], None, [0]
     for nid, out in (entry.get("outputs") or {}).items():
+        print(f"[handler] output node {nid}: keys={list(out.keys())}", flush=True)
         for key in ("gifs", "videos", "images"):
             for item in out.get(key) or []:
                 if not str(item.get("filename", "")).lower().endswith((".mp4", ".webm", ".mov", ".gif")):
@@ -312,11 +394,11 @@ def _collect(entry):
                 q = (f"filename={urllib.parse.quote(item['filename'])}"
                      f"&subfolder={urllib.parse.quote(item.get('subfolder', ''))}&type={item.get('type', 'output')}")
                 data = _http(f"/view?{q}", timeout=300)
-                outputs.append({"filename": item["filename"], "b64": base64.b64encode(data).decode()})
+                outputs.append(_emit_file(item["filename"], data, job, inline_used))
         if nid == N_PREVIEW and out.get("text"):
             t = out["text"]
             final_prompt = t[0] if isinstance(t, list) else str(t)
-    return outputs, final_prompt
+    return outputs, final_prompt, inline_used
 
 
 async def handler(job):
@@ -334,8 +416,22 @@ async def handler(job):
     prompt, seed = await asyncio.to_thread(_patch, wf, inputs)
     print(f"[handler] job {job.get('id')}: {len(prompt)} nodes, seed {seed}", flush=True)
     started = time.time()
+    comfy_log = Path("/workspace/comfy.log")
+    log_mark = comfy_log.stat().st_size if comfy_log.is_file() else 0
     entry = await _queue_and_wait(prompt)
-    outputs, final_prompt = await asyncio.to_thread(_collect, entry)
+    outputs, final_prompt, inline_used = await asyncio.to_thread(_collect, entry, job)
+    try:  # surface ComfyUI warnings/errors from this job in the worker log
+        with open(comfy_log, "rb") as f:
+            f.seek(log_mark)
+            interesting = [l for l in f.read().decode(errors="replace").splitlines()
+                           if re.search(r"warn|error|missing|unexpected|fail|dtype|clip|traceback", l, re.I)]
+            for l in interesting[-40:]:
+                print(f"[comfy] {l}", flush=True)
+    except Exception:
+        pass
+    if not outputs:
+        outputs = await asyncio.to_thread(_collect_new_files, started, job, inline_used)
+        print(f"[handler] fallback sweep — {len(outputs)} file(s) in output/", flush=True)
     print(f"[handler] done in {time.time() - started:.1f}s — {len(outputs)} video(s)", flush=True)
     if not outputs:
         raise RuntimeError("workflow finished but produced no video (see /workspace/comfy.log)")
