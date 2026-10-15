@@ -8,7 +8,7 @@
         "runsOn": "GPU",
         "containerDiskInGb": 150,
         "gpuCount": 1,
-        "gpuIds": "BLACKWELL_96",
+        "gpuIds": "BLACKWELL_120",
         "allowedCudaVersions": [
             "13.0",
             "13.1",
