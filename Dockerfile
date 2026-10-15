@@ -51,11 +51,6 @@ RUN bash -c 'cd /opt/comfyui-baked/custom_nodes && for node_dir in */; do \
     pip install --no-cache-dir 'runpod>=1.12' requests "huggingface_hub[cli]" hf_transfer && \
     pip cache purge
 
-# llama.cpp runtime for QwenH3PromptLocal (prompt rewriter). The build host has
-# no GPU, so pick the CUDA 13 backend explicitly; the entrypoint retries at boot.
-RUN cd /opt/comfyui-baked/custom_nodes/ComfyUI_Qwen_H3_Prompt && \
-    (python3 install_runtime.py --backend cuda13 || echo "llama runtime will be installed at boot")
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Model dirs (empty — real models come from the network volume via
 # extra_model_paths.yaml written by the entrypoint)
