@@ -48,20 +48,13 @@ if [ "${VOLUME_AUTOPOPULATE:-true}" = "true" ]; then
     VOL_ROOT="${MODEL_ROOT%/models}" /opt/serverless/populate-volume.sh || echo "entrypoint: model populate failed — jobs may error on missing models" >&2
 fi
 
-# SelfLift workflow: QwenH3PromptLocal hardcodes models/LLM/Qwen3.8 and the
-# H3 latent upscaler scans models/latent_upscale_models — link both.
-mkdir -p "$MODEL_ROOT/LLM/Qwen3.8" "$MODEL_ROOT/latent_upscale_models" "$COMFYUI_DIR/models/LLM"
-for pair in "LLM/Qwen3.8" "latent_upscale_models"; do
-    dest="$COMFYUI_DIR/models/$pair"
-    [ -d "$dest" ] && [ ! -L "$dest" ] && rm -rf "$dest"
-    ln -sfn "$MODEL_ROOT/$pair" "$dest"
-done
+# SelfLift workflow: the H3 latent upscaler scans models/latent_upscale_models —
+# link it into ComfyUI's model tree.
+mkdir -p "$MODEL_ROOT/latent_upscale_models"
+dest="$COMFYUI_DIR/models/latent_upscale_models"
+[ -d "$dest" ] && [ ! -L "$dest" ] && rm -rf "$dest"
+ln -sfn "$MODEL_ROOT/latent_upscale_models" "$dest"
 
 export PATH="$VENV_DIR/bin:$PATH"
 
-# llama.cpp runtime fallback for QwenH3PromptLocal (cached on container disk)
-QN="$COMFYUI_DIR/custom_nodes/ComfyUI_Qwen_H3_Prompt"
-if [ -d "$QN" ] && [ ! -f "$QN/runtime_config.json" ]; then
-    (cd "$QN" && python3 install_runtime.py --backend cuda13) || echo "entrypoint: Qwen llama runtime install failed" >&2
-fi
 exec python3 /opt/serverless/handler.py
