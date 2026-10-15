@@ -409,7 +409,7 @@ async def handler(job):
             "comfyui": "failed" if _BOOT_ERR else ("ready" if _BOOT_DONE.is_set() else "booting"),
             "comfyui_error": str(_BOOT_ERR) if _BOOT_ERR else None,
             "workflows": sorted(p.name for p in WORKFLOWS_DIR.glob("*.json")),
-            "volume_mounted": os.path.isdir("/runpod-volume"),
+            "volume_mounted": os.path.isdir(os.environ.get("MODEL_ROOT", "/models")),
         }
     await _ensure_comfy()
     wf = _load_workflow(inputs.get("workflow"))
