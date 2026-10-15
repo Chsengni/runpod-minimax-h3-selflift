@@ -1,6 +1,6 @@
 {
     "title": "MiniMax H3 SelfLift + Sharpness Upscaler",
-    "description": "ComfyUI serverless worker for MiniMax H3 reference-to-video with audio: SelfLift-Avatar two-stage sampler with the H3 sharpness latent upscaler, and a choice of the stock video VAE or the 2X upscale VAE with tiled fast decode. Models auto-download to the container disk on first boot (~93GB).",
+    "description": "ComfyUI serverless worker for MiniMax H3 reference-to-video with audio: SelfLift-Avatar two-stage sampler with the H3 sharpness latent upscaler, and a choice of the stock video VAE or the 2X upscale VAE with tiled fast decode. Models auto-download to your network volume on first boot (~93GB).",
     "type": "serverless",
     "category": "video",
     "iconUrl": "https://raw.githubusercontent.com/chsengni/runpod-minimax-h3-selflift/main/media/icon.png",
@@ -20,7 +20,7 @@
                 "input": {
                     "type": "boolean",
                     "name": "Auto-download models",
-                    "description": "Download missing models to the container disk (/models) at worker boot (~93GB on first boot; each cold start re-downloads).",
+                    "description": "Download missing models to the attached network volume at worker boot. Requires a ≥200GB network volume attached to the endpoint — strongly recommended.",
                     "default": true,
                     "trueValue": "true",
                     "falseValue": "false"
