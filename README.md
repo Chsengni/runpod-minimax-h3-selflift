@@ -20,7 +20,7 @@
 - `TripleHeadedMonkey/ComfyUI-MiniMaxH3_LatentUpscaler`（`MiniMaxH3VAEDecodeFast`）
 
 ## 模型
-`models-manifest.txt` 里的文件会在 worker 首次启动时自动下载到容器磁盘 `/models`（约 93GB，可用 `MODEL_ROOT` 环境变量改位置）：
+`models-manifest.txt` 里的文件会在 worker 首次启动时自动下载到网络卷 `/runpod-volume/models`（约 93GB，建议网络卷 ≥200GB）：
 
 - DiT：`minimax_h3_fl2va_pruned_int8_convrot`
 - 文本编码器：`qwen3vl_32b_heretic_minimax_h3_nvfp4`（NVFP4）
@@ -29,14 +29,14 @@
 - 锐化放大：`h3_upscaler_sharpness_2000steps_v0.1_fp32`
 - 2X VAE：Civitai 下载，需要设置环境变量 `CIVITAI_TOKEN`，不设置则跳过，只能用普通 VAE 工作流
 
-注意：容器磁盘是临时的——worker 缩容到 0 后磁盘清空，下次冷启动会重新下载全部模型（约 93GB）。如需模型持久化，改用网络卷方案（把 `MODEL_ROOT` 指向 `/runpod-volume/models` 并挂载网络卷）。
+注意：模型放在网络卷上，所有 worker 共享，下载一次永久有效。如需改用容器磁盘，把 `MODEL_ROOT` 环境变量指向容器内路径（磁盘是临时的，缩容到 0 后会重下）。
 
 原工作流用 bf16 模型；如需切换，在请求里用 `params` 覆盖，例如 `{"127:unet_name": "...", "128:clip_name": "..."}`。
 
 ## 部署
 1. 推送本仓库（RunPod 从分支构建镜像）。
 2. RunPod → Serverless → New Endpoint → GitHub Repo，选择本仓库。
-3. GPU 选 RTX 5090（32GB），容器磁盘 150GB；模型下载到容器磁盘，无需挂载网络卷；需要 2X VAE 时设置 `CIVITAI_TOKEN`。
+3. GPU 选 RTX 5090（32GB），挂载 ≥200GB 网络卷；需要 2X VAE 时设置 `CIVITAI_TOKEN`。
 
 ## 请求示例
 
