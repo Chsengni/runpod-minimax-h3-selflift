@@ -58,6 +58,11 @@ COMFY_DIR = os.environ.get("COMFYUI_DIR", "/workspace/runpod-slim/ComfyUI")
 COMFY_URL = "http://127.0.0.1:8188"
 WORKFLOWS_DIR = Path(os.environ.get("WORKFLOWS_DIR", "/opt/workflows"))
 JOB_TIMEOUT_S = int(os.environ.get("JOB_TIMEOUT_S", "1800"))
+# Max seconds to wait for ComfyUI to finish booting before aborting the job.
+BOOT_TIMEOUT_S = int(os.environ.get("BOOT_TIMEOUT_S", "600"))
+# Max seconds a queued prompt may run without completing before we interrupt
+# it and fail fast (hang detection). Should be < platform execution timeout.
+STALL_TIMEOUT_S = int(os.environ.get("STALL_TIMEOUT_S", "540"))
 
 # Output delivery: base64 inline under these limits, S3 offload above them.
 # RunPod's job-done callback drops results over ~20MB, so keep headroom.
@@ -131,7 +136,11 @@ def _boot_in_bg():
 
 
 async def _ensure_comfy():
-    await asyncio.to_thread(_BOOT_DONE.wait)
+    ok = await asyncio.to_thread(_BOOT_DONE.wait, BOOT_TIMEOUT_S)
+    if not ok:
+        raise TimeoutError(
+            f"ComfyUI did not finish booting within {BOOT_TIMEOUT_S}s "
+            "(stuck during startup — see /workspace/comfy.log)")
     if _BOOT_ERR is not None:
         raise RuntimeError(f"ComfyUI failed to boot: {_BOOT_ERR} (see /workspace/comfy.log)")
 
@@ -281,9 +290,11 @@ async def _queue_and_wait(prompt):
     resp = json.loads(await asyncio.to_thread(
         _http, "/prompt", {"prompt": prompt, "client_id": uuid.uuid4().hex}, 60))
     prompt_id = resp["prompt_id"]
-    deadline = time.time() + JOB_TIMEOUT_S
+    t0 = time.time()
+    stall_deadline = t0 + STALL_TIMEOUT_S
+    hard_deadline = t0 + JOB_TIMEOUT_S
     try:
-        while time.time() < deadline:
+        while time.time() < hard_deadline:
             hist = json.loads(await asyncio.to_thread(_http, f"/history/{prompt_id}", None, 30))
             entry = hist.get(prompt_id)
             status = (entry or {}).get("status", {})
@@ -292,6 +303,13 @@ async def _queue_and_wait(prompt):
                 raise RuntimeError(f"ComfyUI job failed: {msgs[:1500]}")
             if status.get("completed"):
                 return entry
+            # Hang detection: no completion within STALL_TIMEOUT_S → abort fast
+            # instead of hanging until the platform kills the worker.
+            if time.time() >= stall_deadline:
+                await asyncio.to_thread(_interrupt, prompt_id)
+                raise TimeoutError(
+                    f"prompt {prompt_id} stalled: no result after {STALL_TIMEOUT_S}s "
+                    f"(interrupted; see /workspace/comfy.log)")
             await asyncio.sleep(3)
     except asyncio.CancelledError:
         await asyncio.to_thread(_interrupt, prompt_id)
