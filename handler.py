@@ -12,17 +12,14 @@ Job input (everything except "prompt" and "images" is optional):
     "videos":     ["https://..." | {"url"|"b64": ..., "audio": true}],  # 0-3 reference videos (2-15s) → <Video 1..3>
                                                #   "audio": true also feeds the clip's soundtrack (default true)
     "audios":     ["https://... or base64"],   # 0-3 standalone reference audios → <Audio 1..3>
-    "enhance":    true,                        # false → skip QwenH3PromptLocal, prompt goes straight to H3
     "seconds":    10,                          # video length in seconds
     "aspect_ratio": "16:9 (Widescreen)",      # ResolutionSelector
     "megapixels": 1.5,
-    "seed":       123,                         # pins sampler + Qwen seeds; random if omitted
+    "seed":       123,                         # pins sampler seed; random if omitted
     "steps":      8,                           # BasicScheduler steps
     "lora_strength": 0.65,                     # lightx2v turbo LoRA
     "transition_step": 6,                      # SelfLift low-res → high-res switch
     "lowres_scale": 0.5,
-    "skill":      "auto",                      # QwenH3PromptLocal skill
-    "think_mode": false,
     "params":     {"<node_id>:<input>": value},# raw overrides, applied last
     "s3Config":   {"endpointUrl": ..., "accessId": ..., "accessSecret": ...,
                    "bucketName": ..., "region": ...}  # optional: large outputs offload here
@@ -80,10 +77,8 @@ N_LOADERS = ["150", "222", "223"]  # template LoadImage nodes (replaced per job)
 MAX_IMAGES, MAX_VIDEOS, MAX_AUDIOS = 9, 3, 3
 VIDEO_EXT = (".mp4", ".webm", ".mov", ".mkv", ".avi", ".gif")
 AUDIO_EXT = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac")
-N_SECONDS = "132"     # PrimitiveFloat (duration, also feeds Qwen + frame count)
+N_SECONDS = "132"     # PrimitiveFloat (duration → frame count)
 N_RES = "115"         # ResolutionSelector
-N_QWEN = "156"        # QwenH3PromptLocal
-N_PREVIEW = "155"     # PreviewAny (Qwen output → H3 prompt)
 N_R2V = "136"         # MiniMaxH3ReferenceToVideo
 N_SCHED = "124"       # BasicScheduler
 N_SAMPLER = "193"     # SelfLiftAvatarH3Sampler
@@ -208,7 +203,7 @@ def _wire_references(prompt, job):
         raise RuntimeError("need at least one reference: images / videos / audios")
 
     _drop_nodes(prompt, set(N_LOADERS))
-    r2v, qwen = prompt[N_R2V]["inputs"], prompt.get(N_QWEN, {}).get("inputs")
+    r2v = prompt[N_R2V]["inputs"]
     tag = uuid.uuid4().hex[:8]
 
     for i, item in enumerate(images):
@@ -216,8 +211,6 @@ def _wire_references(prompt, job):
         nid = f"img{i}"
         prompt[nid] = {"class_type": "LoadImage", "inputs": {"image": _upload(f"ref_{tag}_img{i + 1}{ext}", data)}}
         r2v[f"ref_images.ref_image_{i}"] = [nid, 0]
-        if qwen is not None:
-            qwen[f"reference_images.reference_image_{i}"] = [nid, 0]
 
     for i, item in enumerate(videos):
         data, ext, opts = _media(item, ".mp4")
@@ -233,8 +226,6 @@ def _wire_references(prompt, job):
         r2v[f"ref_videos.ref_video_{i}"] = [nid, 0]
         if opts.get("audio", True):
             r2v[f"ref_video_audios.ref_video_audio_{i}"] = [nid, 2]
-        if qwen is not None:
-            qwen[f"reference_videos.reference_video_{i}"] = [nid, 0]
 
     for i, item in enumerate(audios):
         data, ext, opts = _media(item, ".wav")
@@ -252,24 +243,15 @@ def _wire_references(prompt, job):
 def _patch(prompt, job):
     if not job.get("prompt"):
         raise RuntimeError("input.prompt is required")
-    if not job.get("enhance", True):
-        _drop_nodes(prompt, {N_QWEN, N_PREVIEW})
     _wire_references(prompt, job)
 
     seed = job.get("seed")
     seed = random.randrange(0, 2**32) if seed is None else int(seed) % (2**32)
     _set(prompt, N_SAMPLER, "seed", seed)
 
-    if N_QWEN in prompt:
-        q = prompt[N_QWEN]["inputs"]
-        q["prompt"] = job["prompt"]
-        q["seed"] = seed
-        for key in ("skill", "think_mode", "reasoning_effort", "max_tokens", "video_sample_frames_per_sec"):
-            _set(prompt, N_QWEN, key, job.get(key))
-    else:
-        # enhance=false: the user's text goes straight into H3 — use the
-        # <Picture i> / <Video k> / <Audio j> tags yourself.
-        prompt[N_R2V]["inputs"]["prompt"] = job["prompt"]
+    # No LLM prompt enhancement: the user's text goes straight into H3 — use the
+    # <Picture i> / <Video k> / <Audio j> tags yourself.
+    prompt[N_R2V]["inputs"]["prompt"] = job["prompt"]
 
     if job.get("seconds") is not None:
         _set(prompt, N_SECONDS, "value", float(job["seconds"]))
@@ -384,7 +366,9 @@ def _collect_new_files(since_ts, job, inline_used):
 
 
 def _collect(entry, job):
-    outputs, final_prompt, inline_used = [], None, [0]
+    outputs, inline_used = [], [0]
+    # No LLM enhancement: the final prompt is the user's input text.
+    final_prompt = job.get("prompt")
     for nid, out in (entry.get("outputs") or {}).items():
         print(f"[handler] output node {nid}: keys={list(out.keys())}", flush=True)
         for key in ("gifs", "videos", "images"):
@@ -395,9 +379,6 @@ def _collect(entry, job):
                      f"&subfolder={urllib.parse.quote(item.get('subfolder', ''))}&type={item.get('type', 'output')}")
                 data = _http(f"/view?{q}", timeout=300)
                 outputs.append(_emit_file(item["filename"], data, job, inline_used))
-        if nid == N_PREVIEW and out.get("text"):
-            t = out["text"]
-            final_prompt = t[0] if isinstance(t, list) else str(t)
     return outputs, final_prompt, inline_used
 
 
@@ -438,6 +419,9 @@ async def handler(job):
     return {"outputs": outputs, "final_prompt": final_prompt, "seed": seed}
 
 
-if __name__ == "__main__":
-    threading.Thread(target=_boot_in_bg, daemon=True).start()
-    runpod.serverless.start({"handler": handler})
+# Module scope (not under `if __name__ == "__main__"`): RunPod's pre-deploy
+# check statically scans for unindented `import runpod` and
+# `runpod.serverless.start(` — an indented call is invisible to it.
+threading.Thread(target=_boot_in_bg, daemon=True).start()
+
+runpod.serverless.start({"handler": handler})
