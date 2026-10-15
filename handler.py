@@ -109,18 +109,29 @@ _BOOT_ERR = None
 def _boot_comfy():
     cmd = ["python3", "main.py", "--listen", "127.0.0.1", "--port", "8188",
            "--disable-auto-launch"] + os.environ.get("COMFYUI_EXTRA_ARGS", "").split()
+    t0 = time.time()
+    print(f"[handler] starting ComfyUI: {' '.join(cmd)} (cwd={COMFY_DIR})", flush=True)
     log = open("/workspace/comfy.log", "ab", buffering=0)
     proc = subprocess.Popen(cmd, cwd=COMFY_DIR, stdout=log, stderr=subprocess.STDOUT)
-    deadline = time.time() + 600
+    print(f"[handler] ComfyUI pid={proc.pid}, full log -> /workspace/comfy.log", flush=True)
+    deadline = t0 + 600
+    last_note = t0
     while time.time() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError("ComfyUI exited during boot")
+        rc = proc.poll()
+        if rc is not None:
+            raise RuntimeError(f"ComfyUI exited during boot (code={rc}) after {time.time()-t0:.0f}s")
         try:
             _http("/system_stats", timeout=5)
+            print(f"[handler] ComfyUI ready in {time.time()-t0:.0f}s", flush=True)
             return proc
         except Exception:
+            # Periodic heartbeat so a slow boot isn't a black box.
+            if time.time() - last_note >= 30:
+                print(f"[handler] waiting for ComfyUI... {time.time()-t0:.0f}s elapsed",
+                      flush=True)
+                last_note = time.time()
             time.sleep(2)
-    raise RuntimeError("ComfyUI did not become ready in 600s")
+    raise RuntimeError(f"ComfyUI did not become ready in 600s (pid={proc.pid})")
 
 
 def _boot_in_bg():
