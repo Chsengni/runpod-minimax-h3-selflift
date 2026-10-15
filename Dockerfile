@@ -29,7 +29,6 @@ RUN pin() { \
   } && \
     pin slmonker selflift-Avatar v0.1.4-experimental && \
     pin yichengup ComfyUI-YCNodes-MiniMax-H3 146207295c1d2bd6b64a6552484cb6ed8be1c9ef && \
-    pin chflame163 ComfyUI_Qwen_H3_Prompt f8ea17991ea39111ef2b2ebdf6ccb631e21e0300 && \
     pin TripleHeadedMonkey ComfyUI-MiniMaxH3_LatentUpscaler 2e568dfe3e4f5e81da178bc845e05dcfbb64d55b
 
 
