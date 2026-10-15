@@ -37,16 +37,6 @@
                 }
             },
             {
-                "key": "CIVITAI_TOKEN",
-                "input": {
-                    "name": "Civitai token",
-                    "type": "string",
-                    "description": "Needed only for the 2X upscale VAE used by MiniMaxH3-SelfLift-2xVAE-Sharpen-R2VA.json (Civitai download). Without it that file is skipped and only the plain-VAE SelfLift workflow works.",
-                    "default": "",
-                    "advanced": true
-                }
-            },
-            {
                 "key": "JOB_TIMEOUT_S",
                 "input": {
                     "name": "Job timeout (seconds)",

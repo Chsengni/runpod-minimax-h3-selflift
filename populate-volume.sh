@@ -37,14 +37,6 @@ while IFS=$'\t' read -r sub name url; do
     case "$sub" in ''|\#*) continue;; esac
     done_n=$((done_n + 1))
     dest="$M/$sub/$name"
-    if [[ "$url" == *civitai.com* ]]; then
-        # Civitai needs an API token (CIVITAI_TOKEN env) — skip cleanly without one
-        if [ -z "${CIVITAI_TOKEN:-}" ]; then
-            [ -f "$dest" ] || echo "populate: [$done_n/$total] skip $name (set CIVITAI_TOKEN to download)"
-            continue
-        fi
-        url="${url}&token=${CIVITAI_TOKEN}"
-    fi
     if [ -f "$dest" ]; then
         echo "populate: [$done_n/$total] skip $name (present)"
         continue

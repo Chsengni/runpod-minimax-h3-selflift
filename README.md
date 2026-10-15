@@ -7,7 +7,6 @@
 | 工作流 | 解码 |
 |---|---|
 | `MiniMaxH3-SelfLift-Sharpen-R2VA.json` | 普通 VAE（`minimax_h3_video_vae_fp16`） |
-| `MiniMaxH3-SelfLift-2xVAE-Sharpen-R2VA.json` | 2X VAE（hyperVAE Krea2）+ `MiniMaxH3VAEDecodeFast` 分块快速解码 |
 
 流程：最多 9 张参考图 + 3 段参考视频（可带原声）+ 3 段参考音频 → `MiniMaxH3ReferenceToVideo` → `SelfLiftAvatarH3Sampler`（低分辨率采样 + H3 锐化潜空间放大 `h3_upscaler_sharpness_2000steps_v0.1_fp32`）→ 音频 + 视频 → `VHS_VideoCombine` 输出 mp4。
 
@@ -27,7 +26,6 @@
 - VAE：视频 fp16 + 音频 fp32
 - LoRA：Kijai lightx2v turbo 4 步（强度 0.65）
 - 锐化放大：`h3_upscaler_sharpness_2000steps_v0.1_fp32`
-- 2X VAE：Civitai 下载，需要设置环境变量 `CIVITAI_TOKEN`，不设置则跳过，只能用普通 VAE 工作流
 
 注意：模型放在网络卷上，所有 worker 共享，下载一次永久有效。如需改用容器磁盘，把 `MODEL_ROOT` 环境变量指向容器内路径（磁盘是临时的，缩容到 0 后会重下）。
 
@@ -36,7 +34,7 @@
 ## 部署
 1. 推送本仓库（RunPod 从分支构建镜像）。
 2. RunPod → Serverless → New Endpoint → GitHub Repo，选择本仓库。
-3. GPU 选 RTX 5090（32GB），挂载 ≥200GB 网络卷；需要 2X VAE 时设置 `CIVITAI_TOKEN`。
+3. GPU 选 RTX 5090（32GB），挂载 ≥200GB 网络卷。
 
 ## 请求示例
 
@@ -45,7 +43,7 @@
 ```json
 {
   "input": {
-    "workflow": "2xvae",
+    "workflow": "normal",
     "prompt": "第一人称一镜到底的镜头，<Picture 1> 的角色拿着 <Picture 2> 的显卡从 <Picture 3> 的店铺跑向主视角……",
     "images": ["https://.../ref1.png", "https://.../ref2.png", "https://.../ref3.png"],
     "videos": ["https://.../dance.mp4", {"url": "https://.../walk.mp4", "audio": false}],
@@ -57,7 +55,7 @@
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
-| `workflow` | `normal`（普通 VAE）或 `2xvae`（2X VAE + 分块快速解码），也可写 json 文件名 | `normal` |
+| `workflow` | `normal`（普通 VAE），也可写 json 文件名 | `normal` |
 | `prompt` | 创意/指令文本（必填），用 `<Picture i>` / `<Video i>` / `<Audio i>` 引用参考素材 | |
 | `images` | 0–9 张参考图，URL / base64 / data URI，依次对应 `<Picture 1..9>` | |
 | `videos` | 0–3 段参考视频（2–15 秒，按 24fps 读取，最多 360 帧），对应 `<Video 1..3>`；可写成对象 `{"url": ..., "audio": false, "skip_frames": 0, "max_frames": 360}`，`audio` 默认 `true`，即同时送入视频原声 | |

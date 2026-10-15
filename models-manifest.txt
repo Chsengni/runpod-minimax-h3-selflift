@@ -6,4 +6,3 @@ vae	minimax_h3_video_vae_fp16.safetensors	https://huggingface.co/Comfy-Org/MiniM
 vae	minimax_h3_audio_vae_fp32.safetensors	https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors
 loras	minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors	https://huggingface.co/Kijai/MiniMax-H3_comfy/resolve/main/loras/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors
 latent_upscale_models	h3_upscaler_sharpness_2000steps_v0.1_fp32.safetensors	https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/main/latent_upscaler/h3_upscaler_lms_v0.1_fp32.safetensors
-vae	hyperVAEKrea2Minimax_v20MinimaxX2Upscale.safetensors	https://civitai.com/api/download/models/3301496?fileId=3186480

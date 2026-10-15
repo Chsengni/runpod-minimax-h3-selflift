@@ -1,12 +1,11 @@
 """RunPod serverless handler · MiniMax H3 SelfLift + sharpness upscaler (R2VA).
 
-Two API-format workflows live in /opt/workflows:
+One API-format workflow lives in /opt/workflows:
   MiniMaxH3-SelfLift-Sharpen-R2VA.json        stock MiniMax H3 video VAE
-  MiniMaxH3-SelfLift-2xVAE-Sharpen-R2VA.json  2X upscale VAE + tiled fast decode
 
 Job input (everything except "prompt" and "images" is optional):
   {
-    "workflow":   "normal" | "2xvae",          # or the json filename; default "normal"
+    "workflow":   "normal",                    # or the json filename; default "normal"
     "prompt":     "...",                       # idea / directive text
     "images":     ["https://... or base64"],   # 0-9 reference images  → <Picture 1..9>
     "videos":     ["https://..." | {"url"|"b64": ..., "audio": true}],  # 0-3 reference videos (2-15s) → <Video 1..3>
@@ -68,7 +67,6 @@ S3_PREFIX = os.environ.get("S3_OUTPUT_PREFIX", "outputs")
 
 WORKFLOWS = {
     "normal": "MiniMaxH3-SelfLift-Sharpen-R2VA.json",
-    "2xvae": "MiniMaxH3-SelfLift-2xVAE-Sharpen-R2VA.json",
 }
 
 # Node ids shared by both workflows
@@ -170,7 +168,7 @@ def _load_workflow(name):
     name = WORKFLOWS.get(str(name or "normal").lower(), name)
     path = WORKFLOWS_DIR / name
     if not path.is_file():
-        raise RuntimeError(f"workflow not found: {name} (use 'normal' or '2xvae')")
+        raise RuntimeError(f"workflow not found: {name} (use 'normal')")
     return json.loads(path.read_text())
 
 
