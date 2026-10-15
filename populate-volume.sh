@@ -1,12 +1,12 @@
 #!/bin/bash
-# Downloads every file listed in models-manifest.txt onto the network volume.
-# Idempotent (skips existing files) and safe for concurrent workers: a flock
-# on $VOL_ROOT/.populate.lock serializes the pass, so cold workers racing to
-# populate a fresh volume queue up instead of downloading in parallel.
+# Downloads every file listed in models-manifest.txt into $VOL_ROOT/models.
+# Idempotent (skips existing files). On a shared network volume, a flock on
+# $VOL_ROOT/.populate.lock serializes concurrent workers; on a private
+# container disk each worker downloads its own full copy.
 #
 # Env:
-#   VOL_ROOT   mount point of the network volume   (default /runpod-volume)
-#   MANIFEST   path to models-manifest.txt         (default: next to this script)
+#   VOL_ROOT   parent dir holding the models/ dir   (default /runpod-volume)
+#   MANIFEST   path to models-manifest.txt          (default: next to this script)
 #   HF_TOKEN   optional Hugging Face token for gated repos
 set -uo pipefail
 
@@ -16,7 +16,7 @@ MANIFEST="${MANIFEST:-$SCRIPT_DIR/models-manifest.txt}"
 M="$VOL_ROOT/models"
 
 if [ ! -d "$VOL_ROOT" ]; then
-    echo "populate: $VOL_ROOT not mounted — nothing to do"
+    echo "populate: $VOL_ROOT does not exist — nothing to do"
     exit 0
 fi
 if [ ! -f "$MANIFEST" ]; then
